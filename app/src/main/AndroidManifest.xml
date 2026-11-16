@@ -4,7 +4,7 @@
          See docs/permissions.md; do not request permissions before the feature needs them. -->
     <application
         android:allowBackup="false"
-        android:label="ECHO"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
