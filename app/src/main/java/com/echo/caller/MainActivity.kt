@@ -51,8 +51,9 @@ private fun EchoApp(identity: DeviceIdentity, store: TrustedDeviceStore) {
     var tab by rememberSaveable { mutableStateOf("Home") }
     var pairing by rememberSaveable { mutableStateOf(false) }
     var trusted by remember { mutableStateOf(store.all()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var cameraGranted by remember { mutableStateOf(ContextCompat.checkSelfPermission(
-        androidx.compose.ui.platform.LocalContext.current, Manifest.permission.CAMERA
+        context, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED) }
     val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         cameraGranted = granted
