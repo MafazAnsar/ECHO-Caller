@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.wifi.WifiAwareManager
+import android.net.wifi.aware.WifiAwareManager
 import android.net.wifi.WifiManager
 import android.bluetooth.BluetoothManager
 import android.os.Build
