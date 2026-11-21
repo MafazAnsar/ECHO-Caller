@@ -8,7 +8,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.wifi.WifiManager
+import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,10 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
+private data class P2pLinkState(
+    val connected: Boolean = false,
+    val isGroupOwner: Boolean = false,
+    val groupOwnerAddress: String? = null
+)
+
 @Composable
 fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -63,24 +68,49 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     } else {
         Manifest.permission.ACCESS_FINE_LOCATION
     }
-
     var permissionGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-        )
+        mutableStateOf(ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED)
     }
     var status by remember { mutableStateOf("Ready to search for nearby Wi-Fi Direct devices.") }
     val transportManager = remember { TransportManager() }
     var peers by remember { mutableStateOf<List<DiscoveredPeer>>(emptyList()) }
     var discovering by remember { mutableStateOf(false) }
-    var p2pEnabled by remember { mutableStateOf(true) }
+    var link by remember { mutableStateOf(P2pLinkState()) }
+    var connectingTo by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         permissionGranted = granted
         status = if (granted) "Permission granted. Tap Start discovery." else
-            "Nearby-device permission was not granted. ECHO cannot search without it."
+            "Nearby-device permission was not granted. ECHO cannot use Wi-Fi Direct without it."
+    }
+
+    fun refreshConnectionInfo() {
+        if (manager == null || channel == null) return
+        try {
+            manager.requestConnectionInfo(channel) { info: WifiP2pInfo ->
+                if (info.groupFormed) {
+                    link = P2pLinkState(
+                        connected = true,
+                        isGroupOwner = info.isGroupOwner,
+                        groupOwnerAddress = info.groupOwnerAddress?.hostAddress
+                    )
+                    connectingTo = null
+                    status = if (info.isGroupOwner) {
+                        "Direct Wi-Fi connection established. This phone is the group owner."
+                    } else {
+                        "Direct Wi-Fi connection established. Connected to the group owner."
+                    }
+                } else {
+                    link = P2pLinkState()
+                    connectingTo = null
+                    status = "No active Wi-Fi Direct connection."
+                }
+            }
+        } catch (_: SecurityException) {
+            status = "Nearby-device permission is required to read connection status."
+        }
     }
 
     DisposableEffect(context, manager, channel, permissionGranted) {
@@ -90,19 +120,22 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
             val filter = IntentFilter().apply {
                 addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
                 addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+                addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
             }
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(receiveContext: Context?, intent: Intent?) {
                     when (intent?.action) {
                         WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
-                            p2pEnabled = intent.getIntExtra(
+                            val enabled = intent.getIntExtra(
                                 WifiP2pManager.EXTRA_WIFI_STATE,
                                 WifiP2pManager.WIFI_P2P_STATE_DISABLED
                             ) == WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                            if (!p2pEnabled) {
+                            if (!enabled) {
                                 discovering = false
-                                status = "Wi-Fi Direct is currently disabled by the phone."
+                                connectingTo = null
+                                link = P2pLinkState()
                                 peers = transportManager.clear()
+                                status = "Wi-Fi Direct is disabled by the phone. Turn on Wi-Fi and try again."
                             }
                         }
                         WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
@@ -112,69 +145,130 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                                         TransportType.WIFI_DIRECT,
                                         WifiDirectPeerMapper.map(list.deviceList)
                                     )
-                                    status = if (peers.isEmpty()) {
-                                        "Search is running. No nearby Wi-Fi Direct devices have been reported yet."
-                                    } else {
-                                        "Found ${peers.size} nearby Wi-Fi Direct device(s)."
+                                    if (!link.connected && connectingTo == null) {
+                                        status = if (peers.isEmpty()) {
+                                            "Search is running. No nearby Wi-Fi Direct devices have been reported yet."
+                                        } else {
+                                            "Found ${peers.size} nearby Wi-Fi Direct device(s)."
+                                        }
                                     }
                                 }
                             } catch (_: SecurityException) {
                                 status = "Permission is needed to read nearby Wi-Fi Direct devices."
                             }
                         }
+                        WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> refreshConnectionInfo()
                     }
                 }
             }
-            ContextCompat.registerReceiver(
-                context,
-                receiver,
-                filter,
-                ContextCompat.RECEIVER_EXPORTED
-            )
-            onDispose {
-                runCatching { context.unregisterReceiver(receiver) }
-            }
+            ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
+            onDispose { runCatching { context.unregisterReceiver(receiver) } }
         }
     }
 
-    val wifiManager = remember {
-        appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-    }
-    val locationManager = remember {
-        appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-    }
+    val wifiManager = remember { appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager }
+    val locationManager = remember { appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager }
     val wifiEnabled = runCatching { wifiManager?.isWifiEnabled == true }.getOrDefault(false)
     val locationEnabled = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) locationManager?.isLocationEnabled == true
-        else true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) locationManager?.isLocationEnabled == true else true
     }.getOrDefault(false)
-    val supported = remember {
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)
+    val supported = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT) }
+
+    fun startConnection(peer: DiscoveredPeer) {
+        if (!wifiEnabled) {
+            status = "Turn on Wi-Fi in Android settings before connecting."
+            return
+        }
+        if (!permissionGranted) {
+            permissionLauncher.launch(permission)
+            return
+        }
+        if (manager == null || channel == null) {
+            status = "Android Wi-Fi Direct service could not be initialised."
+            return
+        }
+        if (peer.transportAddress.isBlank() || peer.transportAddress == "Address unavailable") {
+            status = "Android did not provide an address for this device. Refresh discovery and try again."
+            return
+        }
+        connectingTo = peer.peerId
+        status = "Requesting a direct connection to ${peer.displayName}…"
+        try {
+            val config = WifiP2pConfig().apply { deviceAddress = peer.transportAddress }
+            manager.connect(channel, config, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    // This confirms only that Android accepted the request, not that a link exists.
+                    status = "Connection request accepted. Waiting for both phones to establish the link…"
+                }
+                override fun onFailure(reason: Int) {
+                    connectingTo = null
+                    status = when (reason) {
+                        WifiP2pManager.P2P_UNSUPPORTED -> "Wi-Fi Direct connection is not supported on this phone."
+                        WifiP2pManager.BUSY -> "Wi-Fi Direct is busy. Stop discovery or wait briefly, then retry."
+                        WifiP2pManager.ERROR -> "Android reported a connection error. Please retry."
+                        else -> "Connection request failed (code $reason)."
+                    }
+                }
+            })
+        } catch (_: SecurityException) {
+            connectingTo = null
+            status = "Nearby-device permission is required to connect."
+        } catch (_: Exception) {
+            connectingTo = null
+            status = "Could not start the Wi-Fi Direct connection. Please retry."
+        }
+    }
+
+    fun disconnect() {
+        if (manager == null || channel == null) return
+        status = "Disconnecting Wi-Fi Direct…"
+        try {
+            manager.removeGroup(channel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    link = P2pLinkState()
+                    connectingTo = null
+                    status = "Wi-Fi Direct group disconnected."
+                }
+                override fun onFailure(reason: Int) {
+                    refreshConnectionInfo()
+                    if (link.connected) status = "Disconnect request failed (code $reason). The connection may still be active."
+                    else status = "No active Wi-Fi Direct group."
+                }
+            })
+        } catch (_: SecurityException) {
+            status = "Nearby-device permission is required to disconnect."
+        }
     }
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Nearby discovery", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-        Text("Find nearby devices using Android Wi-Fi Direct. This step does not connect to them.", color = Color(0xFF6D7D87), fontSize = 13.sp)
+        Text("Nearby discovery & connection", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+        Text("Discover nearby Wi-Fi Direct devices, then request a direct local connection. Identity authentication is not part of this step.", color = Color(0xFF6D7D87), fontSize = 13.sp)
 
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF142B3A)), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("DISCOVERY STATUS", color = Color(0xFFB8C8D0), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(status, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                Text("CONNECTION STATUS", color = Color(0xFFB8C8D0), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(status, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                if (link.connected) {
+                    Text(
+                        "Connected • ${if (link.isGroupOwner) "Group owner" else "Client"}",
+                        color = Color(0xFF8DE0C9), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)
+                    )
+                    link.groupOwnerAddress?.let {
+                        Text("Group owner address: $it", color = Color(0xFFB8C8D0), fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+                    }
+                } else if (connectingTo != null) {
+                    Text("Connection pending", color = Color(0xFFFFD18A), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
             }
         }
 
-        if (!supported) {
-            InfoCard("Wi-Fi Direct is not reported as supported on this phone.")
-        } else if (!wifiEnabled) {
-            InfoCard("Turn on Wi-Fi in Android settings, then return here. ECHO will not change the setting for you.")
-        } else if (!locationEnabled) {
-            InfoCard("Android Location must be switched on for Wi-Fi Direct peer discovery on this device.")
-        } else if (!permissionGranted) {
-            InfoCard("ECHO needs the Nearby devices permission to search. It is used for nearby Wi-Fi discovery, not to identify your location.")
-        }
+        if (!supported) InfoCard("Wi-Fi Direct is not reported as supported on this phone.")
+        else if (!wifiEnabled) InfoCard("Turn on Wi-Fi in Android settings, then return here. ECHO will not change the setting for you.")
+        else if (!locationEnabled) InfoCard("Android Location must be switched on for Wi-Fi Direct peer discovery on this device.")
+        else if (!permissionGranted) InfoCard("ECHO needs Nearby devices permission to search and connect using Wi-Fi Direct.")
 
         Button(
             onClick = {
@@ -194,10 +288,7 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                                     status = "Search request accepted. Waiting for nearby devices…"
                                     try {
                                         manager.requestPeers(channel) { list ->
-                                            peers = transportManager.replacePeers(
-                                                TransportType.WIFI_DIRECT,
-                                                WifiDirectPeerMapper.map(list.deviceList)
-                                            )
+                                            peers = transportManager.replacePeers(TransportType.WIFI_DIRECT, WifiDirectPeerMapper.map(list.deviceList))
                                             if (peers.isNotEmpty()) status = "Found ${peers.size} nearby Wi-Fi Direct device(s)."
                                         }
                                     } catch (_: SecurityException) {
@@ -221,42 +312,31 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                     }
                 }
             },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            enabled = !discovering
-        ) {
-            Text(if (!permissionGranted) "Allow and start discovery" else "Start discovery")
-        }
+            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), enabled = !discovering && !link.connected
+        ) { Text(if (!permissionGranted) "Allow and start discovery" else "Start discovery") }
 
         if (discovering) {
             OutlinedButton(
                 onClick = {
-                    if (manager != null && channel != null) {
-                        try {
-                            manager.stopPeerDiscovery(channel, object : WifiP2pManager.ActionListener {
-                                override fun onSuccess() {
-                                    discovering = false
-                                    status = "Discovery stopped."
-                                }
-                                override fun onFailure(reason: Int) {
-                                    discovering = false
-                                    status = "Stop request completed with code $reason."
-                                }
-                            })
-                        } catch (_: SecurityException) {
-                            discovering = false
-                            status = "Discovery could not be stopped because permission is unavailable."
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                    if (manager != null && channel != null) try {
+                        manager.stopPeerDiscovery(channel, object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() { discovering = false; status = "Discovery stopped." }
+                            override fun onFailure(reason: Int) { discovering = false; status = "Stop request completed with code $reason." }
+                        })
+                    } catch (_: SecurityException) { discovering = false; status = "Permission is required to stop discovery." }
+                }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)
             ) { Text("Stop discovery") }
+        }
+
+        if (link.connected) {
+            OutlinedButton(onClick = { disconnect() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                Text("Disconnect")
+            }
         }
 
         Text("NEARBY WI-FI DIRECT DEVICES", color = Color(0xFF6D7D87), fontSize = 10.sp, fontWeight = FontWeight.Bold)
         if (peers.isEmpty()) {
-            InfoCard("No devices listed yet. Install ECHO on the second phone, enable Wi-Fi, grant its nearby-device permission, and start discovery there too.")
+            InfoCard("No devices listed yet. Install ECHO on the second phone, enable Wi-Fi, grant its Nearby devices permission, and start discovery there too.")
         } else {
             peers.forEach { peer ->
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(14.dp)) {
@@ -264,6 +344,11 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                         Text(peer.displayName, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
                         Text("${peer.availability}  •  ${peer.transportAddress}", color = Color(0xFF6D7D87), fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
                         Text("Transport: ${peer.transport.label}  •  Identity: ${peer.identityStatus.label}", color = Color(0xFF6D7D87), fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+                        Button(
+                            onClick = { startConnection(peer) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            enabled = !link.connected && connectingTo == null && peer.availability != "Unavailable" && peer.transportAddress != "Address unavailable"
+                        ) { Text(if (connectingTo == peer.peerId) "Requesting connection…" else "Connect") }
                     }
                 }
             }
@@ -271,11 +356,11 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
 
         Surface(color = Color(0xFFE4F5F1), shape = RoundedCornerShape(13.dp)) {
             Text(
-                "Important: Wi-Fi Direct discovery lists nearby Wi-Fi P2P devices, not verified ECHO identities. It does not pair, connect, or enable calls. ECHO identity matching and secure connections come in later steps.",
+                "Phase 1.5A only establishes the Android Wi-Fi Direct link. A successful link does not prove the other phone is a trusted ECHO device. Identity authentication and encrypted application messaging are later steps. No calls or mesh relaying are enabled.",
                 color = Color(0xFF142B3A), fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(13.dp)
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.padding(bottom = 4.dp))
     }
 }
 
@@ -284,13 +369,4 @@ private fun InfoCard(message: String) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(14.dp)) {
         Text(message, color = Color(0xFF6D7D87), fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(15.dp))
     }
-}
-
-private fun peerStatus(status: Int): String = when (status) {
-    WifiP2pDevice.AVAILABLE -> "Available"
-    WifiP2pDevice.INVITED -> "Invited"
-    WifiP2pDevice.CONNECTED -> "Connected"
-    WifiP2pDevice.FAILED -> "Failed"
-    WifiP2pDevice.UNAVAILABLE -> "Unavailable"
-    else -> "Status unknown"
 }
