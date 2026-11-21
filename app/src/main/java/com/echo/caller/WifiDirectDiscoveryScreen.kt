@@ -47,12 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
-private data class NearbyWifiPeer(
-    val name: String,
-    val address: String,
-    val status: String
-)
-
 @Composable
 fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -76,7 +70,8 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
         )
     }
     var status by remember { mutableStateOf("Ready to search for nearby Wi-Fi Direct devices.") }
-    var peers by remember { mutableStateOf<List<NearbyWifiPeer>>(emptyList()) }
+    val transportManager = remember { TransportManager() }
+    var peers by remember { mutableStateOf<List<DiscoveredPeer>>(emptyList()) }
     var discovering by remember { mutableStateOf(false) }
     var p2pEnabled by remember { mutableStateOf(true) }
 
@@ -107,19 +102,16 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                             if (!p2pEnabled) {
                                 discovering = false
                                 status = "Wi-Fi Direct is currently disabled by the phone."
-                                peers = emptyList()
+                                peers = transportManager.clear()
                             }
                         }
                         WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
                             try {
                                 manager.requestPeers(channel) { list ->
-                                    peers = list.deviceList.map { device ->
-                                        NearbyWifiPeer(
-                                            name = device.deviceName.ifBlank { "Unnamed Wi-Fi Direct device" },
-                                            address = device.deviceAddress,
-                                            status = peerStatus(device.status)
-                                        )
-                                    }
+                                    peers = transportManager.replacePeers(
+                                        TransportType.WIFI_DIRECT,
+                                        WifiDirectPeerMapper.map(list.deviceList)
+                                    )
                                     status = if (peers.isEmpty()) {
                                         "Search is running. No nearby Wi-Fi Direct devices have been reported yet."
                                     } else {
@@ -193,7 +185,7 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                     !permissionGranted -> permissionLauncher.launch(permission)
                     manager == null || channel == null -> status = "Android Wi-Fi Direct service could not be initialised."
                     else -> {
-                        peers = emptyList()
+                        peers = transportManager.clear()
                         discovering = true
                         status = "Starting Wi-Fi Direct peer search…"
                         try {
@@ -202,13 +194,10 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                                     status = "Search request accepted. Waiting for nearby devices…"
                                     try {
                                         manager.requestPeers(channel) { list ->
-                                            peers = list.deviceList.map { device ->
-                                                NearbyWifiPeer(
-                                                    device.deviceName.ifBlank { "Unnamed Wi-Fi Direct device" },
-                                                    device.deviceAddress,
-                                                    peerStatus(device.status)
-                                                )
-                                            }
+                                            peers = transportManager.replacePeers(
+                                                TransportType.WIFI_DIRECT,
+                                                WifiDirectPeerMapper.map(list.deviceList)
+                                            )
                                             if (peers.isNotEmpty()) status = "Found ${peers.size} nearby Wi-Fi Direct device(s)."
                                         }
                                     } catch (_: SecurityException) {
@@ -272,8 +261,9 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
             peers.forEach { peer ->
                 Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(14.dp)) {
                     Column(Modifier.fillMaxWidth().padding(15.dp)) {
-                        Text(peer.name, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
-                        Text("${peer.status}  •  ${peer.address}", color = Color(0xFF6D7D87), fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+                        Text(peer.displayName, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
+                        Text("${peer.availability}  •  ${peer.transportAddress}", color = Color(0xFF6D7D87), fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+                        Text("Transport: ${peer.transport.label}  •  Identity: ${peer.identityStatus.label}", color = Color(0xFF6D7D87), fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
