@@ -31,3 +31,9 @@ During ringing, ECHO may create/warm the peer connection, establish authenticate
 
 ## Background constraints
 Use supported notifications and foreground-service types where required. Android and OEM battery policies can prevent reliable background discovery or incoming-call delivery. Force-stopped apps cannot be promised to receive calls. Request microphone access only in context and capture only after acceptance.
+
+
+## Transport abstraction and peer registry (Phase 1.4C)
+`TransportAdapter` defines the common discovery lifecycle for transport implementations. `DiscoveredPeer` is the transport-neutral peer record, and `TransportManager` maintains a de-duplicated view across transports. The current Wi-Fi Direct discovery screen maps Android `WifiP2pDevice` results through `WifiDirectPeerMapper` into this common model.
+
+A transport address, device name, or discovery result is not an ECHO identity. All peers discovered in this phase remain `UNVERIFIED`. Only a later authenticated identity handshake may set `VERIFIED` and populate `verifiedFingerprint`. Wi-Fi Aware, LAN/NSD and Bluetooth adapters are extension points, not implemented transports in this phase.
