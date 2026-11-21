@@ -1,4 +1,3 @@
-
 package com.echo.caller
 
 import android.Manifest
@@ -82,7 +81,7 @@ private fun EchoApp(identity: DeviceIdentity, store: TrustedDeviceStore) {
             containerColor = Canvas,
             bottomBar = {
                 if (!pairing) NavigationBar(containerColor = Color.White) {
-                    listOf("Home", "Devices", "Network", "Activity").forEach { item ->
+                    listOf("Home", "Devices", "Discover", "Network", "Activity").forEach { item ->
                         NavigationBarItem(
                             selected = tab == item,
                             onClick = {
@@ -94,6 +93,7 @@ private fun EchoApp(identity: DeviceIdentity, store: TrustedDeviceStore) {
                                     when (item) {
                                         "Home" -> "⌂"
                                         "Devices" -> "▦"
+                                        "Discover" -> "⌕"
                                         "Network" -> "⌁"
                                         else -> "◷"
                                     },
@@ -129,6 +129,10 @@ private fun EchoApp(identity: DeviceIdentity, store: TrustedDeviceStore) {
                         store.remove(it)
                         trusted = store.all()
                     }
+                )
+
+                tab == "Discover" -> WifiDirectDiscoveryScreen(
+                    Modifier.padding(pad)
                 )
 
                 tab == "Network" -> NetworkDiagnosticsScreen(
