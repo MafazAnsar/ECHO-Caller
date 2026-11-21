@@ -30,6 +30,7 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     val state = controller.state
     val peers = controller.peers
     val discovering = controller.discovering
+    val diagnostics = controller.diagnostics
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
@@ -45,7 +46,7 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Nearby discovery & connection", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-        Text("Connection monitoring is now app-level and should remain available while navigating between tabs.", color = Color(0xFF6D7D87), fontSize = 13.sp)
+        Text("Diagnostic mode: this screen records Android's local Wi-Fi Direct callbacks and broadcasts.", color = Color(0xFF6D7D87), fontSize = 13.sp)
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF142B3A)), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("CONNECTION STATUS", color = Color(0xFFB8C8D0), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -70,6 +71,7 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
         }
         if (discovering) OutlinedButton(onClick = { controller.stopDiscovery() }, modifier = Modifier.fillMaxWidth()) { Text("Stop discovery") }
         if (state.connected) OutlinedButton(onClick = { controller.disconnect() }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
+
         Text("NEARBY WI-FI DIRECT DEVICES", color = Color(0xFF6D7D87), fontSize = 10.sp, fontWeight = FontWeight.Bold)
         if (peers.isEmpty()) InfoCard("No devices listed yet. Enable Wi-Fi on both phones and start discovery on both.")
         else peers.forEach { peer ->
@@ -85,8 +87,18 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+
+        Text("DIAGNOSTIC EVENTS", color = Color(0xFF6D7D87), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(13.dp)) {
+                if (diagnostics.isEmpty()) Text("No events recorded yet.", color = Color(0xFF6D7D87), fontSize = 12.sp)
+                else diagnostics.takeLast(20).forEach {
+                    Text(it, color = Color(0xFF142B3A), fontSize = 10.sp, lineHeight = 15.sp)
+                }
+            }
+        }
         Surface(color = Color(0xFFE4F5F1), shape = RoundedCornerShape(13.dp)) {
-            Text("A Wi-Fi Direct link is not an authenticated ECHO identity. Identity verification and encrypted messaging are separate later steps. No calls or mesh relaying are enabled.",
+            Text("A Wi-Fi Direct link is not an authenticated ECHO identity. This diagnostic version does not enable calls or mesh relaying.",
                 color = Color(0xFF142B3A), fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(13.dp))
         }
     }
@@ -99,7 +111,6 @@ private fun InfoCard(message: String) {
     }
 }
 
-/** Add this to DevicesScreen to display a live link separately from QR-trusted identities. */
 @Composable
 fun ConnectedDevicesPanel() {
     val state = WifiDirectControllerHolder.peek()?.state
