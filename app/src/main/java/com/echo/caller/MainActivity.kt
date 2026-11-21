@@ -346,7 +346,7 @@ private fun HomeScreen(
         Spacer(Modifier.height(20.dp))
 
         Text(
-            "ECHO  •  VERSION 0.4.0",
+            "ECHO  •  VERSION 0.6.1",
             Modifier.fillMaxWidth(),
             color = Muted,
             fontSize = 10.sp,
@@ -629,7 +629,11 @@ private fun DevicesScreen(
     onPair: () -> Unit,
     onRemove: (String) -> Unit
 ) {
-    Column(modifier.fillMaxSize().padding(22.dp)) {
+    Column(
+        modifier.fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(22.dp)
+    ) {
         Text(
             "Devices",
             fontSize = 28.sp,
@@ -646,6 +650,14 @@ private fun DevicesScreen(
 
         Spacer(Modifier.height(18.dp))
 
+        // This panel reads the app-level Wi-Fi Direct controller, so the
+        // connection remains visible when the user changes tabs.
+        ConnectedDevicesPanel()
+
+        Spacer(Modifier.height(22.dp))
+        SectionLabel("TRUSTED ECHO IDENTITIES")
+        Spacer(Modifier.height(10.dp))
+
         if (trusted.isEmpty()) {
             EmptyCard(
                 "⌕",
@@ -653,24 +665,23 @@ private fun DevicesScreen(
                 "Scan another phone's ECHO QR code to add it to this list."
             )
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(trusted, key = { it.fingerprint }) { device ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                            DeviceRow(device.displayName, device.fingerprint)
+            trusted.forEach { device ->
+                Card(
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        DeviceRow(device.displayName, device.fingerprint)
 
-                            Text(
-                                "Remove trusted device",
-                                color = MaterialTheme.colorScheme.error,
-                                fontSize = 12.sp,
-                                modifier = Modifier.align(Alignment.End)
-                                    .clickable { onRemove(device.fingerprint) }
-                                    .padding(top = 10.dp)
-                            )
-                        }
+                        Text(
+                            "Remove trusted device",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.End)
+                                .clickable { onRemove(device.fingerprint) }
+                                .padding(top = 10.dp)
+                        )
                     }
                 }
             }
@@ -684,40 +695,6 @@ private fun DevicesScreen(
             shape = RoundedCornerShape(13.dp)
         ) {
             Text("Pair another device")
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("CONNECTION")
-
-        Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.padding(top = 8.dp)
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    Modifier.size(9.dp).clip(CircleShape)
-                        .background(Color(0xFFE7A64A))
-                )
-
-                Spacer(Modifier.width(10.dp))
-
-                Column {
-                    Text(
-                        "Local discovery inactive",
-                        color = Ink,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "Trusted identities are saved; network discovery comes next.",
-                        color = Muted,
-                        fontSize = 12.sp
-                    )
-                }
-            }
         }
     }
 }
