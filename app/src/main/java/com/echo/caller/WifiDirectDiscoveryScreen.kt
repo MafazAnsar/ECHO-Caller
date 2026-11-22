@@ -43,8 +43,37 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     val locationOn = runCatching { if (Build.VERSION.SDK_INT >= 28) location?.isLocationEnabled == true else true }.getOrDefault(false)
     val supported = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT) }
 
+    val lanController = remember { LanDiscoveryController(app) }
+    val lanPeers = lanController.peers
+    val lanRunning = lanController.running.value
+    val lanStatus = lanController.status.value
+    val lanEvents = lanController.events
+
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("LOCAL NETWORK (WI-FI)", color = Color(0xFF13866F), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text("Find ECHO devices on the same Wi-Fi network. Internet and mobile data are not required.", color = Color(0xFF6D7D87), fontSize = 12.sp)
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(15.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                Text(lanStatus, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Button(
+                    onClick = { if (lanRunning) lanController.stop() else lanController.start() },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) { Text(if (lanRunning) "Stop LAN discovery" else "Start LAN discovery") }
+                if (lanPeers.isEmpty()) {
+                    Text("No other ECHO devices found yet.", color = Color(0xFF6D7D87), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                } else lanPeers.forEach { peer ->
+                    Divider(Modifier.padding(vertical = 8.dp))
+                    Text(peer.name, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
+                    Text("${peer.host}:${peer.port}", color = Color(0xFF6D7D87), fontSize = 11.sp)
+                    Text("ECHO identity: Not verified", color = Color(0xFF8A6A2F), fontSize = 11.sp)
+                }
+                if (lanEvents.isNotEmpty()) {
+                    Text("RECENT LAN EVENTS", color = Color(0xFF6D7D87), fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                    lanEvents.takeLast(5).forEach { Text(it, color = Color(0xFF6D7D87), fontSize = 10.sp) }
+                }
+            }
+        }
         Text("Nearby discovery & connection", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
         Text("Diagnostic mode: this screen records Android's local Wi-Fi Direct callbacks and broadcasts.", color = Color(0xFF6D7D87), fontSize = 13.sp)
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF142B3A)), shape = RoundedCornerShape(16.dp)) {
