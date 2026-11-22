@@ -74,15 +74,10 @@ class LanDiscoveryController(context: Context) {
                     try {
                         socket.accept().use { client: Socket ->
                             client.soTimeout = 5000
-                            val request = client.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
-                            if (request == "ECHO_PING/1") {
-                                val response = "ECHO_PONG/1|${Build.MODEL.take(24)}\n"
-                                client.getOutputStream().write(response.toByteArray(Charsets.UTF_8))
-                                client.getOutputStream().flush()
-                                log("LAN handshake completed with ${client.inetAddress.hostAddress}.")
-                            } else {
-                                log("Rejected unknown LAN test message from ${client.inetAddress.hostAddress}.")
-                            }
+                            val authenticatedPeer = EchoSecureHandshake.server(
+                                client, DeviceIdentityManager(app), TrustedDeviceStore(app)
+                            )
+                            log("Authenticated encrypted session with $authenticatedPeer.")
                         }
                     } catch (_: Exception) {
                         if (!socket.isClosed) log("LAN listener stopped unexpectedly.")
@@ -212,27 +207,21 @@ class LanDiscoveryController(context: Context) {
     fun testConnection(peer: LanPeer) {
         if (connectingPeer.value != null) return
         connectingPeer.value = peer.name
-        connectionTest.value = "Connecting to ${peer.name}…"
-        thread(name = "ECHO-LAN-test", isDaemon = true) {
+        connectionTest.value = "Authenticating and establishing encryption with ${peer.name}…"
+        thread(name = "ECHO-LAN-secure-test", isDaemon = true) {
             try {
+                val trusted = TrustedDeviceStore(app).all().firstOrNull { it.fingerprint == peer.fingerprint }
+                    ?: throw SecurityException("This device is not QR-paired. Pair both phones first.")
                 Socket().use { socket ->
                     socket.connect(java.net.InetSocketAddress(peer.host, peer.port), 5000)
-                    socket.soTimeout = 5000
-                    socket.getOutputStream().write("ECHO_PING/1\n".toByteArray(Charsets.UTF_8))
-                    socket.getOutputStream().flush()
-                    val response = socket.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
-                    if (response?.startsWith("ECHO_PONG/1|") == true) {
-                        val remoteName = response.substringAfter("|")
-                        connectionTest.value = "Success: exchanged test messages with $remoteName (${peer.host})."
-                        log("Test message exchange succeeded with ${peer.name}.")
-                    } else {
-                        connectionTest.value = "Connection reached ${peer.name}, but its reply was invalid."
-                        log("Invalid LAN handshake reply from ${peer.name}.")
-                    }
+                    socket.soTimeout = 8000
+                    val remoteName = EchoSecureHandshake.client(socket, DeviceIdentityManager(app), trusted)
+                    connectionTest.value = "Secure success: authenticated $remoteName and exchanged an encrypted message."
+                    log("Mutual authentication and encrypted message exchange succeeded with ${peer.name}.")
                 }
             } catch (e: Exception) {
-                connectionTest.value = "Connection test failed: ${e.javaClass.simpleName}."
-                log("LAN test failed for ${peer.name}: ${e.javaClass.simpleName}.")
+                connectionTest.value = "Secure connection failed: ${e.message ?: e.javaClass.simpleName}"
+                log("Secure LAN test failed for ${peer.name}: ${e.javaClass.simpleName}.")
             } finally {
                 connectingPeer.value = null
             }
