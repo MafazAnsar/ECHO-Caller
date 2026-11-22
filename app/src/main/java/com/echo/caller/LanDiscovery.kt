@@ -43,6 +43,8 @@ class LanDiscoveryController(context: Context) {
     val running = mutableStateOf(false)
     val status = mutableStateOf("LAN discovery is stopped.")
     val events = mutableStateListOf<String>()
+    val connectionTest = mutableStateOf("No connection test yet.")
+    val connectingPeer = mutableStateOf<String?>(null)
 
     @Synchronized
     private fun log(message: String) {
@@ -195,6 +197,36 @@ class LanDiscoveryController(context: Context) {
                 log("Start exception: ${e.javaClass.simpleName}: ${e.message}")
             }
             stop()
+        }
+    }
+
+    fun testConnection(peer: LanPeer) {
+        if (connectingPeer.value != null) return
+        connectingPeer.value = peer.name
+        connectionTest.value = "Connecting to \${peer.name}…"
+        thread(name = "ECHO-LAN-test", isDaemon = true) {
+            try {
+                Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress(peer.host, peer.port), 5000)
+                    socket.soTimeout = 5000
+                    socket.getOutputStream().write("ECHO_PING/1\n".toByteArray(Charsets.UTF_8))
+                    socket.getOutputStream().flush()
+                    val response = socket.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
+                    if (response?.startsWith("ECHO_PONG/1|") == true) {
+                        val remoteName = response.substringAfter("|")
+                        connectionTest.value = "Success: exchanged test messages with $remoteName (\${peer.host})."
+                        log("Test message exchange succeeded with \${peer.name}.")
+                    } else {
+                        connectionTest.value = "Connection reached \${peer.name}, but its reply was invalid."
+                        log("Invalid LAN handshake reply from \${peer.name}.")
+                    }
+                }
+            } catch (e: Exception) {
+                connectionTest.value = "Connection test failed: \${e.javaClass.simpleName}."
+                log("LAN test failed for \${peer.name}: \${e.javaClass.simpleName}.")
+            } finally {
+                connectingPeer.value = null
+            }
         }
     }
 
