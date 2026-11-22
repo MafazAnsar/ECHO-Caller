@@ -1,5 +1,6 @@
 package com.echo.caller
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -26,6 +27,9 @@ data class WifiLinkState(
     val message: String = "Ready."
 )
 
+// Every Wi-Fi Direct operation below is gated by permitted() and catches SecurityException.
+// Lint cannot follow the permission check through this helper, so suppress its false positives here.
+@SuppressLint("MissingPermission")
 class WifiDirectConnectionController(context: Context) {
     private val app = context.applicationContext
     private val p2p = app.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
