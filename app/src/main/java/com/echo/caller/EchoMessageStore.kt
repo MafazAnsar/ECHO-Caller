@@ -90,6 +90,26 @@ class EchoMessageStore(context: Context) :
         return result
     }
 
+    fun allMessages(limit: Int = 300): List<EchoMessage> {
+        val safeLimit = limit.coerceIn(1, 1000)
+        val result = mutableListOf<EchoMessage>()
+        readableDatabase.query(
+            "messages",
+            arrayOf("id", "peer_fingerprint", "direction", "body", "created_at", "delivery_state"),
+            null, null, null, null, "created_at DESC",
+            safeLimit.toString()
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result.add(EchoMessage(
+                    cursor.getString(0), cursor.getString(1),
+                    EchoMessageDirection.valueOf(cursor.getString(2)),
+                    cursor.getString(3), cursor.getLong(4), cursor.getString(5)
+                ))
+            }
+        }
+        return result
+    }
+
     fun newMessageId(): String = UUID.randomUUID().toString()
 
     companion object {
