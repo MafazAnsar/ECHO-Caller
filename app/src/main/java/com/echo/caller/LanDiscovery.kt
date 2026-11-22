@@ -73,7 +73,16 @@ class LanDiscoveryController(context: Context) {
                 while (!socket.isClosed) {
                     try {
                         socket.accept().use { client: Socket ->
-                            log("LAN probe received from ${client.inetAddress.hostAddress}.")
+                            client.soTimeout = 5000
+                            val request = client.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
+                            if (request == "ECHO_PING/1") {
+                                val response = "ECHO_PONG/1|${Build.MODEL.take(24)}\\n"
+                                client.getOutputStream().write(response.toByteArray(Charsets.UTF_8))
+                                client.getOutputStream().flush()
+                                log("LAN handshake completed with ${client.inetAddress.hostAddress}.")
+                            } else {
+                                log("Rejected unknown LAN test message from ${client.inetAddress.hostAddress}.")
+                            }
                         }
                     } catch (_: Exception) {
                         if (!socket.isClosed) log("LAN listener stopped unexpectedly.")
