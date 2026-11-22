@@ -46,7 +46,7 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ECHO-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload signed release APK
         if: steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ECHO-signed-release-apk
           path: app/build/outputs/apk/release/app-release.apk
