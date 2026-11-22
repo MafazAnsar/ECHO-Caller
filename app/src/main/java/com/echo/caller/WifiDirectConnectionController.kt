@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.wifi.WpsInfo
+import android.net.MacAddress
 import android.net.wifi.p2p.*
 import android.os.Build
 import androidx.compose.runtime.getValue
@@ -203,10 +203,11 @@ class WifiDirectConnectionController(context: Context) {
     private fun requestConnect(peer: DiscoveredPeer) {
         val manager = p2p ?: return
         val ch = channel ?: return
-        val config = WifiP2pConfig().apply {
-            deviceAddress = peer.transportAddress
-            wps.setup = WpsInfo.PBC
-        }
+        val config = WifiP2pConfig.Builder()
+            .setDeviceAddress(MacAddress.fromString(peer.transportAddress))
+            .enablePersistentMode(false)
+            .build()
+        log("Built modern WifiP2pConfig for peer address=${config.deviceAddress}; persistentMode=false.")
         log("Calling connect() with address=${config.deviceAddress}.")
         try {
             manager.connect(ch, config, object : WifiP2pManager.ActionListener {
