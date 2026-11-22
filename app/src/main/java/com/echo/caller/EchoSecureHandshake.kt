@@ -91,7 +91,15 @@ object EchoSecureHandshake {
         return Session(key, hash)
     }
 
-    private fun transcript(vararg fields: String): ByteArray = encodeFields(*fields)
+    private fun transcript(clientHello: ByteArray, vararg fields: String): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).use { out ->
+            out.writeInt(clientHello.size)
+            out.write(clientHello)
+            fields.forEach { out.writeUTF(it) }
+        }
+        return bytes.toByteArray()
+    }
     private fun encodeFields(vararg fields: String): ByteArray {
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { out -> fields.forEach { out.writeUTF(it) } }
