@@ -75,7 +75,7 @@ class LanDiscoveryController(context: Context) {
                         socket.accept().use { client: Socket ->
                             client.soTimeout = 5000
                             val authenticatedPeer = EchoSecureHandshake.server(
-                                client, DeviceIdentityManager(app), TrustedDeviceStore(app)
+                                client, DeviceIdentityManager(app), TrustedDeviceStore(app), EchoMessageStore(app)
                             )
                             log("Authenticated encrypted session with $authenticatedPeer.")
                         }
@@ -222,6 +222,43 @@ class LanDiscoveryController(context: Context) {
             } catch (e: Exception) {
                 connectionTest.value = "Secure connection failed: ${e.message ?: e.javaClass.simpleName}"
                 log("Secure LAN test failed for ${peer.name}: ${e.javaClass.simpleName}.")
+            } finally {
+                connectingPeer.value = null
+            }
+        }
+    }
+
+    fun sendMessage(peer: LanPeer, body: String) {
+        val text = body.trim()
+        if (text.isEmpty()) {
+            connectionTest.value = "Enter a message first."
+            return
+        }
+        if (text.length > EchoMessageStore.MAX_MESSAGE_CHARS) {
+            connectionTest.value = "Message is too long (maximum 4,000 characters)."
+            return
+        }
+        if (connectingPeer.value != null) return
+        connectingPeer.value = peer.name
+        connectionTest.value = "Sending encrypted message to ${peer.name}…"
+        thread(name = "ECHO-LAN-send-message", isDaemon = true) {
+            try {
+                val trusted = TrustedDeviceStore(app).all().firstOrNull { it.fingerprint == peer.fingerprint }
+                    ?: throw SecurityException("This device is not QR-paired. Pair both phones first.")
+                val store = EchoMessageStore(app)
+                val id = store.newMessageId()
+                Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress(peer.host, peer.port), 5000)
+                    socket.soTimeout = 8000
+                    val remoteName = EchoSecureHandshake.clientSend(socket, DeviceIdentityManager(app), trusted, id, text)
+                    store.add(EchoMessage(id, trusted.fingerprint, EchoMessageDirection.SENT, text,
+                        System.currentTimeMillis(), "DELIVERED"))
+                    connectionTest.value = "Delivered securely to $remoteName."
+                    log("Encrypted message delivered to $remoteName.")
+                }
+            } catch (e: Exception) {
+                connectionTest.value = "Message failed: ${e.message ?: e.javaClass.simpleName}"
+                log("Encrypted message failed for ${peer.name}: ${e.javaClass.simpleName}.")
             } finally {
                 connectingPeer.value = null
             }
