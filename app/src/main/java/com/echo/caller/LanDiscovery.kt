@@ -76,7 +76,7 @@ class LanDiscoveryController(context: Context) {
                             client.soTimeout = 5000
                             val request = client.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
                             if (request == "ECHO_PING/1") {
-                                val response = "ECHO_PONG/1|${Build.MODEL.take(24)}\\n"
+                                val response = "ECHO_PONG/1|${Build.MODEL.take(24)}\n"
                                 client.getOutputStream().write(response.toByteArray(Charsets.UTF_8))
                                 client.getOutputStream().flush()
                                 log("LAN handshake completed with ${client.inetAddress.hostAddress}.")
@@ -212,7 +212,7 @@ class LanDiscoveryController(context: Context) {
     fun testConnection(peer: LanPeer) {
         if (connectingPeer.value != null) return
         connectingPeer.value = peer.name
-        connectionTest.value = "Connecting to \${peer.name}…"
+        connectionTest.value = "Connecting to ${peer.name}…"
         thread(name = "ECHO-LAN-test", isDaemon = true) {
             try {
                 Socket().use { socket ->
@@ -223,16 +223,16 @@ class LanDiscoveryController(context: Context) {
                     val response = socket.getInputStream().bufferedReader(Charsets.UTF_8).readLine()
                     if (response?.startsWith("ECHO_PONG/1|") == true) {
                         val remoteName = response.substringAfter("|")
-                        connectionTest.value = "Success: exchanged test messages with $remoteName (\${peer.host})."
-                        log("Test message exchange succeeded with \${peer.name}.")
+                        connectionTest.value = "Success: exchanged test messages with $remoteName (${peer.host})."
+                        log("Test message exchange succeeded with ${peer.name}.")
                     } else {
-                        connectionTest.value = "Connection reached \${peer.name}, but its reply was invalid."
-                        log("Invalid LAN handshake reply from \${peer.name}.")
+                        connectionTest.value = "Connection reached ${peer.name}, but its reply was invalid."
+                        log("Invalid LAN handshake reply from ${peer.name}.")
                     }
                 }
             } catch (e: Exception) {
-                connectionTest.value = "Connection test failed: \${e.javaClass.simpleName}."
-                log("LAN test failed for \${peer.name}: \${e.javaClass.simpleName}.")
+                connectionTest.value = "Connection test failed: ${e.javaClass.simpleName}."
+                log("LAN test failed for ${peer.name}: ${e.javaClass.simpleName}.")
             } finally {
                 connectingPeer.value = null
             }
