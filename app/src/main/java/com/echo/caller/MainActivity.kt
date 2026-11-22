@@ -759,27 +759,48 @@ private fun EmptyCard(symbol: String, title: String, description: String) {
 
 @Composable
 private fun ActivityScreen(modifier: Modifier) {
-    Column(modifier.fillMaxSize().padding(22.dp)) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val store = remember { EchoMessageStore(context) }
+    var messages by remember { mutableStateOf(store.allMessages()) }
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp)) {
+        Text("Messages", fontSize = 28.sp, color = Ink, fontWeight = FontWeight.Bold)
         Text(
-            "Activity",
-            fontSize = 28.sp,
-            color = Ink,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            "Your recent ECHO calls and connection events",
+            "Encrypted messages stored on this phone",
             Modifier.padding(top = 6.dp),
             color = Muted,
             fontSize = 14.sp
         )
-
-        Spacer(Modifier.height(22.dp))
-
-        EmptyCard(
-            "◷",
-            "Nothing here yet",
-            "Call history will appear here once local calling is implemented."
-        )
+        OutlinedButton(
+            onClick = { messages = store.allMessages() },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+        ) { Text("Refresh messages") }
+        Spacer(Modifier.height(16.dp))
+        if (messages.isEmpty()) {
+            EmptyCard("✉", "No messages yet", "Messages received from trusted ECHO devices will appear here.")
+        } else {
+            messages.forEach { message ->
+                Card(
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(
+                            if (message.direction == EchoMessageDirection.RECEIVED) "RECEIVED" else "SENT",
+                            color = Teal,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(message.body, color = Ink, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
+                        Text(
+                            "${message.peerFingerprint.take(19)} • ${message.deliveryState}",
+                            color = Muted,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(top = 7.dp)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
