@@ -7,7 +7,7 @@ The initial product is **offline/local communication**, not a guaranteed emergen
 - Presentation: Jetpack Compose screens for nearby devices, pairing, incoming call and active call.
 - Domain: device/call models, use cases, repository contracts and call state machine.
 - Data: Room for trusted devices and call history; DataStore for preferences.
-- Discovery: Android NSD/mDNS on LAN first; Wi-Fi Direct next.
+- Discovery: Android NSD/mDNS on LAN first; Wi-Fi Direct remains experimental pending device UAT.
 - Transport: transport abstraction for LAN, Wi-Fi Direct and any experimentally validated Bluetooth path.
 - Voice: WebRTC with Opus.
 - Security: Android Keystore identity, QR pairing, authenticated signalling and DTLS-SRTP media.
@@ -36,4 +36,4 @@ Use supported notifications and foreground-service types where required. Android
 ## Transport abstraction and peer registry (Phase 1.4C)
 `TransportAdapter` defines the common discovery lifecycle for transport implementations. `DiscoveredPeer` is the transport-neutral peer record, and `TransportManager` maintains a de-duplicated view across transports. The current Wi-Fi Direct discovery screen maps Android `WifiP2pDevice` results through `WifiDirectPeerMapper` into this common model.
 
-A transport address, device name, or discovery result is not an ECHO identity. All peers discovered in this phase remain `UNVERIFIED`. Only a later authenticated identity handshake may set `VERIFIED` and populate `verifiedFingerprint`. Wi-Fi Aware, LAN/NSD and Bluetooth adapters are extension points, not implemented transports in this phase.
+A transport address, device name, or discovery result is not an ECHO identity. All peers discovered in this phase remain `UNVERIFIED`. Only a later authenticated identity handshake may set `VERIFIED` and populate `verifiedFingerprint`. LAN/NSD discovery is now implemented as a locator and local TCP listener foundation. It advertises an ECHO service and resolves nearby ECHO service records; it does not yet authenticate peers or carry voice. Wi-Fi Aware and Bluetooth remain extension points, while Wi-Fi Direct discovery is implemented but has not passed device UAT.
