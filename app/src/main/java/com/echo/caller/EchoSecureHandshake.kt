@@ -8,8 +8,9 @@ import java.io.DataOutputStream
 import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.UUID
 
-/** QR-trust-based mutual authentication and ephemeral encrypted LAN session. */
+/** QR-trust-based mutual authentication and one-message encrypted session. */
 object EchoSecureHandshake {
     private const val MAX_FRAME = 16 * 1024
     private const val NONCE_SIZE = 32
@@ -18,7 +19,24 @@ object EchoSecureHandshake {
 
     data class Session(val key: ByteArray, val transcriptHash: ByteArray)
 
-    fun client(socket: Socket, identityManager: DeviceIdentityManager, trustedPeer: TrustedDevice): String {
+    fun client(socket: Socket, identityManager: DeviceIdentityManager, trustedPeer: TrustedDevice): String =
+        exchange(socket, identityManager, trustedPeer, encodeFields("PING"))
+
+    fun clientSend(
+        socket: Socket,
+        identityManager: DeviceIdentityManager,
+        trustedPeer: TrustedDevice,
+        messageId: String,
+        body: String
+    ): String {
+        require(body.isNotBlank() && body.length <= EchoMessageStore.MAX_MESSAGE_CHARS) { "Message is empty or too long." }
+        val reply = exchange(socket, identityManager, trustedPeer, encodeFields("MESSAGE", messageId, body))
+        val fields = decodeFields(reply)
+        require(fields.size == 2 && fields[0] == "ACK" && fields[1] == messageId) { "Peer did not acknowledge the message." }
+        return trustedPeer.displayName
+    }
+
+    private fun exchange(socket: Socket, identityManager: DeviceIdentityManager, trustedPeer: TrustedDevice, payload: ByteArray): ByteArray {
         val local = identityManager.getOrCreate()
         val remoteKey = decodeKey(trustedPeer.publicKeyBase64)
         require(DeviceIdentityManager.fingerprint(remoteKey) == trustedPeer.fingerprint) { "Saved peer identity is invalid." }
@@ -31,26 +49,27 @@ object EchoSecureHandshake {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
         writeFrame(output, clientHello)
-
         val reply = decodeFields(readFrame(input))
         require(reply.size == 6 && reply[0] == REPLY) { "Invalid secure handshake response." }
         require(reply[1] == trustedPeer.fingerprint && reply[2] == local.fingerprint) {
             "The responding device identity does not match the paired device."
         }
-        val serverEphemeral = unb64(reply[3])
         val serverNonce = unb64(reply[4])
         val transcript = transcript(clientUnsigned, reply[1], reply[2], reply[3], reply[4])
         require(DeviceIdentityManager.verifySignature(remoteKey, transcript, unb64(reply[5]))) {
             "The paired device could not prove its identity."
         }
-        val session = derive(ephemeral, serverEphemeral, clientNonce, serverNonce, transcript)
-        writeFrame(output, EchoSessionCrypto.encrypt(session.key, "ECHO_SECURE_PING/1".toByteArray(), session.transcriptHash))
-        val response = String(EchoSessionCrypto.decrypt(session.key, readFrame(input), session.transcriptHash), Charsets.UTF_8)
-        require(response.startsWith("ECHO_SECURE_PONG/1|")) { "Encrypted peer response was invalid." }
-        return response.substringAfter("|")
+        val session = derive(ephemeral, unb64(reply[3]), clientNonce, serverNonce, transcript)
+        writeFrame(output, EchoSessionCrypto.encrypt(session.key, payload, session.transcriptHash))
+        return EchoSessionCrypto.decrypt(session.key, readFrame(input), session.transcriptHash)
     }
 
-    fun server(socket: Socket, identityManager: DeviceIdentityManager, trustedStore: TrustedDeviceStore): String {
+    fun server(
+        socket: Socket,
+        identityManager: DeviceIdentityManager,
+        trustedStore: TrustedDeviceStore,
+        messageStore: EchoMessageStore
+    ): String {
         val local = identityManager.getOrCreate()
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
@@ -74,10 +93,22 @@ object EchoSecureHandshake {
             b64(ephemeral.public.encoded), b64(serverNonce), b64(identityManager.sign(transcript)))
         writeFrame(output, response)
         val session = derive(ephemeral, unb64(hello[3]), unb64(hello[4]), serverNonce, transcript)
-        val ping = EchoSessionCrypto.decrypt(session.key, readFrame(input), session.transcriptHash)
-        require(String(ping, Charsets.UTF_8) == "ECHO_SECURE_PING/1") { "Invalid encrypted test message." }
-        val pong = "ECHO_SECURE_PONG/1|${android.os.Build.MODEL.take(24)}".toByteArray()
-        writeFrame(output, EchoSessionCrypto.encrypt(session.key, pong, session.transcriptHash))
+        val request = decodeFields(EchoSessionCrypto.decrypt(session.key, readFrame(input), session.transcriptHash))
+        val responsePayload = when {
+            request.size == 1 && request[0] == "PING" -> encodeFields("PONG", android.os.Build.MODEL.take(24))
+            request.size == 3 && request[0] == "MESSAGE" -> {
+                val id = request[1]
+                val body = request[2]
+                require(id.length in 1..80 && body.isNotBlank() && body.length <= EchoMessageStore.MAX_MESSAGE_CHARS) {
+                    "Invalid message payload."
+                }
+                messageStore.add(EchoMessage(id, trusted.fingerprint, EchoMessageDirection.RECEIVED,
+                    body, System.currentTimeMillis(), "RECEIVED"))
+                encodeFields("ACK", id)
+            }
+            else -> throw SecurityException("Unknown encrypted request.")
+        }
+        writeFrame(output, EchoSessionCrypto.encrypt(session.key, responsePayload, session.transcriptHash))
         return trusted.displayName
     }
 
@@ -90,14 +121,9 @@ object EchoSecureHandshake {
         shared.fill(0)
         return Session(key, hash)
     }
-
     private fun transcript(clientHello: ByteArray, vararg fields: String): ByteArray {
         val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { out ->
-            out.writeInt(clientHello.size)
-            out.write(clientHello)
-            fields.forEach { out.writeUTF(it) }
-        }
+        DataOutputStream(bytes).use { out -> out.writeInt(clientHello.size); out.write(clientHello); fields.forEach { out.writeUTF(it) } }
         return bytes.toByteArray()
     }
     private fun encodeFields(vararg fields: String): ByteArray {
