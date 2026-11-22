@@ -48,6 +48,8 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
     val lanRunning = lanController.running.value
     val lanStatus = lanController.status.value
     val lanEvents = lanController.events
+    val lanTestResult = lanController.connectionTest.value
+    val lanConnectingPeer = lanController.connectingPeer.value
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -67,7 +69,11 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                     Text(peer.name, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
                     Text("${peer.host}:${peer.port}", color = Color(0xFF6D7D87), fontSize = 11.sp)
                     Text("ECHO identity: Not verified", color = Color(0xFF8A6A2F), fontSize = 11.sp)
+                    OutlinedButton(onClick = { lanController.testConnection(peer) }, enabled = lanConnectingPeer == null, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                        Text(if (lanConnectingPeer == peer.name) "Testing connection…" else "Test connection")
+                    }
                 }
+                Text(lanTestResult, color = Color(0xFF13866F), fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
                 if (lanEvents.isNotEmpty()) {
                     Text("RECENT LAN EVENTS", color = Color(0xFF6D7D87), fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
                     lanEvents.takeLast(5).forEach { Text(it, color = Color(0xFF6D7D87), fontSize = 10.sp) }
