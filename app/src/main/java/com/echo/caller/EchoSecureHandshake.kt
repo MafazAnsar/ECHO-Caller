@@ -8,7 +8,6 @@ import java.io.DataOutputStream
 import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.UUID
 
 /** QR-trust-based mutual authentication and one-message encrypted session. */
 object EchoSecureHandshake {
@@ -19,8 +18,11 @@ object EchoSecureHandshake {
 
     data class Session(val key: ByteArray, val transcriptHash: ByteArray)
 
-    fun client(socket: Socket, identityManager: DeviceIdentityManager, trustedPeer: TrustedDevice): String =
-        exchange(socket, identityManager, trustedPeer, encodeFields("PING"))
+    fun client(socket: Socket, identityManager: DeviceIdentityManager, trustedPeer: TrustedDevice): String {
+        val fields = decodeFields(exchange(socket, identityManager, trustedPeer, encodeFields("PING")))
+        require(fields.size == 2 && fields[0] == "PONG") { "Invalid encrypted test response." }
+        return fields[1]
+    }
 
     fun clientSend(
         socket: Socket,
