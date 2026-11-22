@@ -89,7 +89,7 @@ class LanDiscoveryController(context: Context) {
                 serviceName = "ECHO-${Build.MODEL.take(24)}"
                 serviceType = this@LanDiscoveryController.serviceType
                 port = socket.localPort
-                setAttribute("echo-id", identity.fingerprint.take(64))
+                setAttribute("echo-id", identity.fingerprint)
                 setAttribute("protocol", "1")
             }
 
