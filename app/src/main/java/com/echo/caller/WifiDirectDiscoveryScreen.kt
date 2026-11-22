@@ -68,7 +68,25 @@ fun WifiDirectDiscoveryScreen(modifier: Modifier = Modifier) {
                     Divider(Modifier.padding(vertical = 8.dp))
                     Text(peer.name, color = Color(0xFF142B3A), fontWeight = FontWeight.SemiBold)
                     Text("${peer.host}:${peer.port}", color = Color(0xFF6D7D87), fontSize = 11.sp)
-                    Text("ECHO identity: Not verified", color = Color(0xFF8A6A2F), fontSize = 11.sp)
+                    Text("QR-paired identity required for messaging", color = Color(0xFF8A6A2F), fontSize = 11.sp)
+                    var messageDraft by remember(peer.fingerprint) { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = messageDraft,
+                        onValueChange = { if (it.length <= EchoMessageStore.MAX_MESSAGE_CHARS) messageDraft = it },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        label = { Text("Message") },
+                        placeholder = { Text("Write an encrypted message…") },
+                        enabled = lanConnectingPeer == null,
+                        maxLines = 4
+                    )
+                    Button(
+                        onClick = {
+                            lanController.sendMessage(peer, messageDraft)
+                            messageDraft = ""
+                        },
+                        enabled = lanConnectingPeer == null && messageDraft.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                    ) { Text("Send encrypted message") }
                     OutlinedButton(onClick = { lanController.testConnection(peer) }, enabled = lanConnectingPeer == null, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
                         Text(if (lanConnectingPeer == peer.name) "Testing connection…" else "Test connection")
                     }
