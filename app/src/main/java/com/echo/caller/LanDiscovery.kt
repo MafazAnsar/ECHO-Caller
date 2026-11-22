@@ -98,7 +98,14 @@ class LanDiscoveryController(context: Context) {
                             false
                         }
                     }
-                    if (shouldUnregister) unregisterRegistration(this@LanDiscoveryController.registration)
+                    if (shouldUnregister) {
+                        val pending = synchronized(this@LanDiscoveryController) {
+                            this@LanDiscoveryController.registration.also {
+                                this@LanDiscoveryController.registration = null
+                            }
+                        }
+                        unregisterRegistration(pending)
+                    }
                 }
 
                 override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
@@ -266,11 +273,11 @@ class LanDiscoveryController(context: Context) {
 
         if (serviceRegistered) {
             unregisterRegistration(registration)
+            registration = null
+            serviceRegistered = false
         }
-        // If registration is still pending, onServiceRegistered() will
-        // unregister it as soon as Android confirms that it was registered.
-        registration = null
-        serviceRegistered = false
+        // If registration is still pending, keep its listener reference.
+        // onServiceRegistered() will unregister it when Android confirms it.
 
         server?.let { runCatching { it.close() } }
         server = null
