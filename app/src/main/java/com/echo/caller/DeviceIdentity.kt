@@ -9,6 +9,7 @@ import java.security.KeyFactory
 import java.security.spec.X509EncodedKeySpec
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import android.util.Base64
 
@@ -35,7 +36,34 @@ class DeviceIdentityManager(private val context: Context) {
         return DeviceIdentity(publicKey, encoded, fingerprint(publicKey), Build.MODEL?.take(40)?.ifBlank { "Android device" } ?: "Android device")
     }
 
+    /**
+     * Signs protocol data with this device's long-term Android Keystore identity.
+     * The private key is never exported from Android Keystore.
+     */
+    fun sign(data: ByteArray): ByteArray {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val privateKey = keyStore.getKey(alias, null) as java.security.PrivateKey
+        return Signature.getInstance("SHA256withECDSA").run {
+            initSign(privateKey)
+            update(data)
+            sign()
+        }
+    }
+
     companion object {
+        fun verifySignature(publicKeyEncoded: ByteArray, data: ByteArray, signature: ByteArray): Boolean {
+            return try {
+                val publicKey = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(publicKeyEncoded))
+                Signature.getInstance("SHA256withECDSA").run {
+                    initVerify(publicKey)
+                    update(data)
+                    verify(signature)
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         fun fingerprint(publicKey: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(publicKey)
             .joinToString("") { "%02X".format(it) }.chunked(4).joinToString(" ")
 
