@@ -28,10 +28,16 @@ class LanDiscoveryController(context: Context) {
     private val nsd = app.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val identity = DeviceIdentityManager(app).getOrCreate()
     private val serviceType = "_echo._tcp."
+
     private var server: ServerSocket? = null
     private var registration: NsdManager.RegistrationListener? = null
     private var discovery: NsdManager.DiscoveryListener? = null
+    private var starting = false
+    private var stopRequested = false
+    private var serviceRegistered = false
+
     private val resolving = mutableSetOf<String>()
+    private val peerServiceNames = mutableMapOf<String, String>()
 
     val peers = mutableStateListOf<LanPeer>()
     val running = mutableStateOf(false)
@@ -46,7 +52,18 @@ class LanDiscoveryController(context: Context) {
 
     @Synchronized
     fun start() {
-        if (running.value) return
+        if (starting || running.value) {
+            log("LAN discovery is already starting or running.")
+            return
+        }
+
+        starting = true
+        stopRequested = false
+        serviceRegistered = false
+        peers.clear()
+        peerServiceNames.clear()
+        resolving.clear()
+
         try {
             val socket = ServerSocket(0)
             server = socket
@@ -69,18 +86,37 @@ class LanDiscoveryController(context: Context) {
                 setAttribute("echo-id", identity.fingerprint.take(64))
                 setAttribute("protocol", "1")
             }
+
             val registerListener = object : NsdManager.RegistrationListener {
                 override fun onServiceRegistered(info: NsdServiceInfo) {
-                    log("Advertising ${info.serviceName} on local network.")
-                    status.value = "Advertising and searching for ECHO devices."
+                    val shouldUnregister = synchronized(this@LanDiscoveryController) {
+                        serviceRegistered = true
+                        starting = false
+                        if (stopRequested) true else {
+                            status.value = "Advertising and searching for ECHO devices."
+                            log("Advertising ${info.serviceName} on local network.")
+                            false
+                        }
+                    }
+                    if (shouldUnregister) unregisterRegistration(this@LanDiscoveryController.registration)
                 }
+
                 override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                    log("Service registration failed ($errorCode).")
-                    status.value = "Could not advertise this device ($errorCode)."
+                    synchronized(this@LanDiscoveryController) {
+                        serviceRegistered = false
+                        starting = false
+                        log("Service registration failed ($errorCode).")
+                        if (!stopRequested) status.value = "Could not advertise this device ($errorCode)."
+                    }
                 }
+
                 override fun onServiceUnregistered(info: NsdServiceInfo) {
-                    log("LAN service unregistered.")
+                    synchronized(this@LanDiscoveryController) {
+                        serviceRegistered = false
+                        log("LAN service unregistered.")
+                    }
                 }
+
                 override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
                     log("Service unregistration failed ($errorCode).")
                 }
@@ -90,29 +126,55 @@ class LanDiscoveryController(context: Context) {
 
             val discoveryListener = object : NsdManager.DiscoveryListener {
                 override fun onDiscoveryStarted(type: String) {
-                    running.value = true
-                    status.value = "Searching this Wi-Fi network for ECHO devices."
-                    log("LAN discovery started.")
+                    synchronized(this@LanDiscoveryController) {
+                        if (stopRequested) {
+                            runCatching { nsd.stopServiceDiscovery(this) }
+                            return
+                        }
+                        running.value = true
+                        starting = false
+                        status.value = "Searching this Wi-Fi network for ECHO devices."
+                        log("LAN discovery started.")
+                    }
                 }
+
                 override fun onServiceFound(info: NsdServiceInfo) {
                     if (info.serviceType.trimEnd('.') == serviceType.trimEnd('.')) {
                         log("Found service: ${info.serviceName}. Resolving…")
                         resolve(info)
                     }
                 }
+
                 override fun onServiceLost(info: NsdServiceInfo) {
-                    peers.removeAll { it.name == info.serviceName }
-                    log("Service lost: ${info.serviceName}.")
+                    synchronized(this@LanDiscoveryController) {
+                        val key = peerServiceNames.entries.firstOrNull { it.value == info.serviceName }?.key
+                        if (key != null) {
+                            val peer = peers.firstOrNull { peerKey(it) == key }
+                            if (peer?.name == info.serviceName) peers.remove(peer)
+                            peerServiceNames.remove(key)
+                        }
+                        resolving.remove(info.serviceName)
+                        log("Service lost: ${info.serviceName}.")
+                    }
                 }
+
                 override fun onDiscoveryStopped(type: String) {
-                    running.value = false
-                    log("LAN discovery stopped.")
+                    synchronized(this@LanDiscoveryController) {
+                        running.value = false
+                        log("LAN discovery stopped.")
+                    }
                 }
+
                 override fun onStartDiscoveryFailed(type: String, errorCode: Int) {
-                    running.value = false
-                    status.value = "LAN discovery failed ($errorCode)."
-                    log("Discovery start failed ($errorCode).")
+                    synchronized(this@LanDiscoveryController) {
+                        running.value = false
+                        starting = false
+                        status.value = "LAN discovery failed ($errorCode)."
+                        log("Discovery start failed ($errorCode).")
+                    }
+                    runCatching { nsd.stopServiceDiscovery(this) }
                 }
+
                 override fun onStopDiscoveryFailed(type: String, errorCode: Int) {
                     log("Discovery stop failed ($errorCode).")
                 }
@@ -120,37 +182,63 @@ class LanDiscoveryController(context: Context) {
             discovery = discoveryListener
             nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
         } catch (e: Exception) {
-            running.value = false
-            status.value = "LAN discovery could not start: ${e.javaClass.simpleName}."
-            log("Start exception: ${e.javaClass.simpleName}: ${e.message}")
+            synchronized(this) {
+                starting = false
+                status.value = "LAN discovery could not start: ${e.javaClass.simpleName}."
+                log("Start exception: ${e.javaClass.simpleName}: ${e.message}")
+            }
             stop()
         }
     }
+
+    private fun peerKey(peer: LanPeer): String =
+        if (peer.fingerprint.isNotBlank()) "id:${peer.fingerprint}" else "host:${peer.host}"
 
     @Suppress("DEPRECATION")
     private fun resolve(service: NsdServiceInfo) {
         synchronized(resolving) {
             if (!resolving.add(service.serviceName)) return
         }
+
         val listener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
                 synchronized(resolving) { resolving.remove(service.serviceName) }
                 log("Could not resolve ${service.serviceName} ($errorCode).")
             }
+
             override fun onServiceResolved(info: NsdServiceInfo) {
                 synchronized(resolving) { resolving.remove(service.serviceName) }
                 val host = info.host?.hostAddress.orEmpty()
                 val fingerprint = info.attributes["echo-id"]?.toString(Charsets.UTF_8).orEmpty()
-                if (host.isNotBlank() && info.port > 0 && fingerprint != identity.fingerprint) {
+
+                if (fingerprint == identity.fingerprint) {
+                    log("Ignored this phone's own LAN advertisement.")
+                    return
+                }
+
+                if (host.isBlank() || info.port <= 0) {
+                    log("Ignored incomplete service record: ${info.serviceName}.")
+                    return
+                }
+
+                synchronized(this@LanDiscoveryController) {
+                    if (stopRequested) return
                     val peer = LanPeer(info.serviceName, host, info.port, fingerprint)
-                    val index = peers.indexOfFirst { it.name == peer.name }
-                    if (index >= 0) peers[index] = peer else peers.add(peer)
-                    log("Resolved ${info.serviceName} at $host:${info.port}; identity not verified.")
-                } else {
-                    log("Ignored own service or incomplete service record: ${info.serviceName}.")
+                    val key = peerKey(peer)
+                    val old = peers.firstOrNull { peerKey(it) == key }
+                    if (old == null) {
+                        peers.add(peer)
+                        log("Resolved ${info.serviceName} at $host:${info.port}; identity not verified.")
+                    } else if (old.host != peer.host || old.port != peer.port || old.name != peer.name) {
+                        val index = peers.indexOf(old)
+                        if (index >= 0) peers[index] = peer
+                        log("Updated LAN endpoint for ${info.serviceName} at $host:${info.port}.")
+                    }
+                    peerServiceNames[key] = info.serviceName
                 }
             }
         }
+
         try {
             nsd.resolveService(service, listener)
         } catch (e: Exception) {
@@ -159,20 +247,36 @@ class LanDiscoveryController(context: Context) {
         }
     }
 
+    private fun unregisterRegistration(listener: NsdManager.RegistrationListener?) {
+        if (listener == null) return
+        runCatching { nsd.unregisterService(listener) }
+            .onFailure { log("Unregister request failed: ${it.javaClass.simpleName}.") }
+    }
+
     @Synchronized
     fun stop() {
-        try {
-            discovery?.let { nsd.stopServiceDiscovery(it) }
-        } catch (_: Exception) { }
-        try {
-            registration?.let { nsd.unregisterService(it) }
-        } catch (_: Exception) { }
+        stopRequested = true
+        starting = false
+
+        discovery?.let { listener ->
+            runCatching { nsd.stopServiceDiscovery(listener) }
+                .onFailure { log("Stop discovery request failed: ${it.javaClass.simpleName}.") }
+        }
         discovery = null
+
+        if (serviceRegistered) {
+            unregisterRegistration(registration)
+        }
+        // If registration is still pending, onServiceRegistered() will
+        // unregister it as soon as Android confirms that it was registered.
         registration = null
+        serviceRegistered = false
+
         server?.let { runCatching { it.close() } }
         server = null
         peers.clear()
-        resolving.clear()
+        peerServiceNames.clear()
+        synchronized(resolving) { resolving.clear() }
         running.value = false
         status.value = "LAN discovery is stopped."
         log("LAN discovery stopped by user.")
