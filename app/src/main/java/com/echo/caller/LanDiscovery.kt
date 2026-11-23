@@ -8,6 +8,9 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 data class LanPeer(
@@ -38,6 +41,11 @@ class LanDiscoveryController(context: Context) {
 
     private val resolving = mutableSetOf<String>()
     private val peerServiceNames = mutableMapOf<String, String>()
+    private val pendingPeerRemovals = mutableMapOf<String, ScheduledFuture<*>>()
+    private val removalScheduler = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "ECHO-LAN-peer-expiry").apply { isDaemon = true }
+    }
+    private val peerLossGracePeriodSeconds = 20L
 
     val peers = mutableStateListOf<LanPeer>()
     val running = mutableStateOf(false)
@@ -153,6 +161,9 @@ class LanDiscoveryController(context: Context) {
 
                 override fun onServiceFound(info: NsdServiceInfo) {
                     if (info.serviceType.trimEnd('.') == serviceType.trimEnd('.')) {
+                        synchronized(this@LanDiscoveryController) {
+                            pendingPeerRemovals.remove(info.serviceName)?.cancel(false)
+                        }
                         log("Found service: ${info.serviceName}. Resolving…")
                         resolve(info)
                     }
@@ -160,14 +171,23 @@ class LanDiscoveryController(context: Context) {
 
                 override fun onServiceLost(info: NsdServiceInfo) {
                     synchronized(this@LanDiscoveryController) {
-                        val key = peerServiceNames.entries.firstOrNull { it.value == info.serviceName }?.key
-                        if (key != null) {
-                            val peer = peers.firstOrNull { peerKey(it) == key }
-                            if (peer?.name == info.serviceName) peers.remove(peer)
-                            peerServiceNames.remove(key)
-                        }
-                        resolving.remove(info.serviceName)
-                        log("Service lost: ${info.serviceName}.")
+                        pendingPeerRemovals.remove(info.serviceName)?.cancel(false)
+                        val expiry = removalScheduler.schedule({
+                            synchronized(this@LanDiscoveryController) {
+                                val key = peerServiceNames.entries.firstOrNull { it.value == info.serviceName }?.key
+                                if (key != null) {
+                                    val peer = peers.firstOrNull { peerKey(it) == key }
+                                    if (peer?.name == info.serviceName) {
+                                        peers.remove(peer)
+                                        log("Removed ${info.serviceName} after ${peerLossGracePeriodSeconds}s without rediscovery.")
+                                    }
+                                    peerServiceNames.remove(key)
+                                }
+                                pendingPeerRemovals.remove(info.serviceName)
+                            }
+                        }, peerLossGracePeriodSeconds, TimeUnit.SECONDS)
+                        pendingPeerRemovals[info.serviceName] = expiry
+                        log("Service temporarily lost: ${info.serviceName}; keeping it visible for ${peerLossGracePeriodSeconds}s.")
                     }
                 }
 
@@ -350,6 +370,8 @@ class LanDiscoveryController(context: Context) {
         server = null
         peers.clear()
         peerServiceNames.clear()
+        pendingPeerRemovals.values.forEach { it.cancel(false) }
+        pendingPeerRemovals.clear()
         synchronized(resolving) { resolving.clear() }
         running.value = false
         status.value = "LAN discovery is stopped."
